@@ -4,7 +4,7 @@ A distributed API rate limiter built with **FastAPI + Redis**. Several API
 instances share one Redis, so a client's limit is enforced **across the whole
 cluster** — not once per server.
 
-📍 **Status:** Phases 1–8 done (setup → surviving a Redis outage). See [ROADMAP.md](ROADMAP.md) for the full plan.
+📍 **Status:** Phases 1–9 done (setup → load tested with k6). See [ROADMAP.md](ROADMAP.md) for the full plan.
 
 ---
 
@@ -202,6 +202,34 @@ trim → count → add atomically ⚛️
 
 ---
 
+## 📊 Load testing (k6)
+
+```bash
+# throughput and latency
+BASE_URL=http://localhost:8080 k6 run loadtest/load_test.js
+
+# does the limit hold when 50 VUs hit the same key at once?
+BASE_URL=http://localhost:8080 RATE_LIMIT=10 k6 run loadtest/accuracy_test.js
+```
+
+Headline numbers from a real run (100 VUs, 3 instances, limit 50/min/key):
+
+| | |
+|---|---|
+| Requests | **175,873** at **3,908 req/s** |
+| Failures | **0.00%** — no 5xx, ever |
+| Latency | **p95 27ms**, p99 45ms |
+| Allowed | **exactly 5,000** = 100 keys × 50 🎯 |
+
+And the fixed window's boundary burst showed up **in the load test itself** —
+it allowed **10,000** where the limit implies 5,000, while the sliding window
+allowed exactly 5,000 💥
+
+📄 Full methodology, the algorithm comparison and how to reproduce:
+**[loadtest/RESULTS.md](loadtest/RESULTS.md)**
+
+---
+
 ## 📁 Layout
 
 ```
@@ -215,6 +243,7 @@ app/
     ├── sliding_window.py  # sorted set + Lua script
     └── resilient.py       # fail-open / fail-closed when Redis is down
 tests/
+loadtest/              # k6 scripts + measured RESULTS.md
 nginx/nginx.conf       # load balancer across the 3 instances
 Dockerfile
 docker-compose.yml     # redis + api1/api2/api3 + nginx
