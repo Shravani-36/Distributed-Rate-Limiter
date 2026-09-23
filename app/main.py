@@ -10,7 +10,7 @@ from app.redis_client import redis_client
 app = FastAPI(title="Distributed Rate Limiter")
 
 limiter = build_limiter(redis_client)
-INSTANCE = socket.gethostname()
+INSTANCE = settings.instance_name or socket.gethostname()
 
 # Paths that must answer even when the client is being rate limited.
 EXEMPT_PATHS = {"/health", "/metrics", "/docs", "/openapi.json"}
@@ -36,6 +36,9 @@ async def rate_limit_middleware(request: Request, call_next):
         "X-RateLimit-Limit": str(decision.limit),
         "X-RateLimit-Remaining": str(decision.remaining),
         "X-RateLimit-Algorithm": settings.algorithm,
+        # Which instance answered - visible on 429s too, where there is no body
+        # from the app to carry it.
+        "X-Instance": INSTANCE,
     }
 
     if not decision.allowed:

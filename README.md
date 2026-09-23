@@ -4,11 +4,34 @@ A distributed API rate limiter built with **FastAPI + Redis**. Several API
 instances share one Redis, so a client's limit is enforced **across the whole
 cluster** — not once per server.
 
-📍 **Status:** Phases 1–5 done (setup → sliding window). See [ROADMAP.md](ROADMAP.md) for the full plan.
+📍 **Status:** Phases 1–7 done (setup → 3 instances behind Nginx). See [ROADMAP.md](ROADMAP.md) for the full plan.
 
 ---
 
-## ⚡ Quick start
+## 🐳 Run the full cluster (recommended)
+
+Three API instances + Nginx + Redis, in one command:
+
+```bash
+docker compose up --build
+```
+
+Then hit the load balancer 👉 http://localhost:8080
+
+```bash
+for i in $(seq 1 12); do
+  curl -s -D- -o /dev/null -H "X-API-Key: user1" localhost:8080/api/data \
+    | grep -Ei "^HTTP|x-instance" | tr -d '\r' | paste -sd' '
+done
+```
+
+➡️ Watch `x-instance` change every request — **but the limit still holds**,
+because all three instances share one Redis 🎯 That's what makes this
+*distributed*.
+
+---
+
+## ⚡ Run a single instance (for development)
 
 ```bash
 python -m venv venv
@@ -41,6 +64,8 @@ Every response carries:
 |--------|---------|
 | `X-RateLimit-Limit` | requests allowed per window |
 | `X-RateLimit-Remaining` | how many are left |
+| `X-RateLimit-Algorithm` | `fixed` or `sliding` |
+| `X-Instance` | which API instance answered |
 | `Retry-After` | seconds to wait (only on `429`) |
 
 ---
@@ -64,6 +89,7 @@ Set these as environment variables:
 | `RATE_LIMIT` | `10` | requests per window |
 | `WINDOW_SECONDS` | `60` | window length |
 | `ALGORITHM` | `sliding` | `fixed` or `sliding` |
+| `INSTANCE_NAME` | hostname | name shown in `X-Instance` |
 
 ```bash
 ALGORITHM=fixed RATE_LIMIT=5 WINDOW_SECONDS=10 uvicorn app.main:app --reload
@@ -119,6 +145,18 @@ algorithms, shared budgets across two limiter instances, and a
 a bucket boundary: the fixed window lets **8** requests through where the
 limit is 4, the sliding window lets exactly **4**.
 
+### 🏁 Verified under concurrency
+
+60 requests fired **in parallel** at 3 instances sharing one Redis, limit 20:
+
+```
+     20 200
+     40 429
+```
+
+Exactly 20 got through — no overshoot. That's the Lua script doing
+trim → count → add atomically ⚛️
+
 ---
 
 ## 📁 Layout
@@ -133,4 +171,7 @@ app/
     ├── fixed_window.py    # INCR + EXPIRE
     └── sliding_window.py  # sorted set + Lua script
 tests/
+nginx/nginx.conf       # load balancer across the 3 instances
+Dockerfile
+docker-compose.yml     # redis + api1/api2/api3 + nginx
 ```

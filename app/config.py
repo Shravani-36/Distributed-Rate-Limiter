@@ -16,5 +16,9 @@ class Settings(BaseSettings):
     # "fixed" (simple, cheap) or "sliding" (accurate, no boundary burst)
     algorithm: str = "sliding"
 
+    # Shown in responses so you can tell which instance answered.
+    # Defaults to the hostname (the container or pod name).
+    instance_name: str = ""
+
 
 settings = Settings()
