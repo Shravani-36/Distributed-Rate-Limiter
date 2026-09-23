@@ -4,7 +4,7 @@ A distributed API rate limiter built with **FastAPI + Redis**. Several API
 instances share one Redis, so a client's limit is enforced **across the whole
 cluster** — not once per server.
 
-📍 **Status:** Phases 1–4 done (setup → fixed window). See [ROADMAP.md](ROADMAP.md) for the full plan.
+📍 **Status:** Phases 1–5 done (setup → sliding window). See [ROADMAP.md](ROADMAP.md) for the full plan.
 
 ---
 
@@ -63,25 +63,47 @@ Set these as environment variables:
 | `REDIS_URL` | `redis://localhost:6379/0` | shared state store |
 | `RATE_LIMIT` | `10` | requests per window |
 | `WINDOW_SECONDS` | `60` | window length |
-| `ALGORITHM` | `fixed` | `fixed` today, `sliding` in phase 5 |
+| `ALGORITHM` | `sliding` | `fixed` or `sliding` |
 
 ```bash
-RATE_LIMIT=5 WINDOW_SECONDS=10 uvicorn app.main:app --reload
+ALGORITHM=fixed RATE_LIMIT=5 WINDOW_SECONDS=10 uvicorn app.main:app --reload
 ```
 
 ---
 
-## 🧠 How the fixed window works
+## 🧠 The two algorithms
+
+### 🪣 Fixed window — `ALGORITHM=fixed`
 
 1. Time is chopped into buckets of `WINDOW_SECONDS`
-2. Each request runs `INCR` on `rl:fixed:<client>:<bucket>` in Redis
+2. Each request runs `INCR` on `rl:fixed:<client>:<bucket>`
 3. `EXPIRE` makes the key clean itself up
 4. Counter above the limit → `429`
 
-Because the key lives in **Redis**, every API instance sees the same counter 🎯
+⚠️ **The catch — boundary burst:** a client can send 10 requests at `0:59`
+and 10 more at `1:01`. That's **20 requests in 2 seconds**, even though the
+limit says 10 per minute 😱
 
-⚠️ **The catch:** a client can send 10 requests at `0:59` and 10 more at
-`1:01` — 20 requests in 2 seconds. The **sliding window** (phase 5) fixes this.
+### 🎚️ Sliding window — `ALGORITHM=sliding` (default)
+
+Keeps a **log of timestamps** in a Redis sorted set, and always looks at the
+last `WINDOW_SECONDS` — so the window moves with the clock:
+
+1. `ZREMRANGEBYSCORE` drops timestamps older than the window
+2. `ZCARD` counts what's left
+3. Under the limit → `ZADD` this request, else `429`
+
+All three steps run inside **one Lua script**, so Redis executes them
+atomically ⚛️ Two API instances can never both read "9 used" and both let a
+request through.
+
+| | Fixed | Sliding |
+|---|-------|---------|
+| Redis memory | 1 integer per client | 1 entry per request in window |
+| Boundary burst | ❌ up to 2x the limit | ✅ blocked |
+| Redis commands | `INCR` + `EXPIRE` | 1 Lua script |
+
+Because the state lives in **Redis**, every API instance shares one budget 🎯
 
 ---
 
@@ -91,7 +113,11 @@ Because the key lives in **Redis**, every API instance sees the same counter �
 pytest -v
 ```
 
-10 tests, using `fakeredis` — no running Redis needed.
+18 tests, using `fakeredis` — no running Redis needed. They cover both
+algorithms, shared budgets across two limiter instances, and a
+`test_sliding_window_stops_the_boundary_burst` test that fires a burst across
+a bucket boundary: the fixed window lets **8** requests through where the
+limit is 4, the sliding window lets exactly **4**.
 
 ---
 
@@ -103,7 +129,8 @@ app/
 ├── config.py          # settings from environment variables
 ├── redis_client.py    # Redis connection
 └── limiter/
-    ├── base.py          # Decision + RateLimiter interface
-    └── fixed_window.py  # phase 4 algorithm
+    ├── base.py            # Decision + RateLimiter interface
+    ├── fixed_window.py    # INCR + EXPIRE
+    └── sliding_window.py  # sorted set + Lua script
 tests/
 ```

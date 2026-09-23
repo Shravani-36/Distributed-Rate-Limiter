@@ -13,8 +13,8 @@ class Settings(BaseSettings):
     rate_limit: int = 10
     window_seconds: int = 60
 
-    # "fixed" (phase 4) or "sliding" (phase 5)
-    algorithm: str = "fixed"
+    # "fixed" (simple, cheap) or "sliding" (accurate, no boundary burst)
+    algorithm: str = "sliding"
 
 
 settings = Settings()
