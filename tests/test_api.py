@@ -1,11 +1,11 @@
 import fakeredis
 import pytest
 from fastapi.testclient import TestClient
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from app import main
 from app.limiter.fixed_window import FixedWindowLimiter
 from app.limiter.resilient import ResilientLimiter
-from redis.exceptions import ConnectionError as RedisConnectionError
 
 
 class _BrokenLimiter:

@@ -1,10 +1,49 @@
 # 🚦 Distributed Rate Limiter
 
+[![CI](https://github.com/shravani-36/distributed-rate-limiter/actions/workflows/ci.yml/badge.svg)](https://github.com/shravani-36/distributed-rate-limiter/actions/workflows/ci.yml)
+
 A distributed API rate limiter built with **FastAPI + Redis**. Several API
 instances share one Redis, so a client's limit is enforced **across the whole
 cluster** — not once per server.
 
-📍 **Status:** Phases 1–11 done (setup → Kubernetes). See [ROADMAP.md](ROADMAP.md) for the full plan.
+> **The problem it solves:** run your API on 3 servers with an in-memory
+> limiter and a "10 per minute" limit quietly becomes 30 per minute. Each
+> server counts alone. This project makes the count **shared**.
+
+---
+
+## 🏗️ Architecture
+
+```
+                        ┌─────────────┐
+     k6 load test  ───▶ │    Nginx    │  round-robin
+                        └──────┬──────┘
+               ┌───────────────┼───────────────┐
+               ▼               ▼               ▼
+          ┌─────────┐     ┌─────────┐     ┌─────────┐
+          │  API 1  │     │  API 2  │     │  API 3  │   FastAPI
+          └────┬────┘     └────┬────┘     └────┬────┘
+               └───────────────┼───────────────┘
+                               ▼
+                        ┌─────────────┐
+                        │    Redis    │  ONE shared counter
+                        └─────────────┘   = ONE shared limit
+
+          Prometheus scrapes /metrics on all 3 ──▶ Grafana
+```
+
+---
+
+## ✨ Features
+
+- 🎚️ **Two algorithms** — fixed window and sliding window (Lua, atomic)
+- 🔑 **Per-API-key limits**, falling back to client IP
+- 🌐 **Shared state in Redis** — the limit holds across every instance
+- 🛡️ **Redis outage policy** — fail-open or fail-closed, your choice
+- 📋 **Standard headers** — `X-RateLimit-*`, `Retry-After`
+- 📈 **Prometheus metrics** + a Grafana dashboard that provisions itself
+- 🐳 **Docker Compose** cluster and ☸️ **Kubernetes** manifests with autoscaling
+- 🧪 **32 tests** + k6 load tests + CI on every push
 
 ---
 
@@ -312,3 +351,58 @@ nginx/nginx.conf       # load balancer across the 3 instances
 Dockerfile
 docker-compose.yml     # redis + 3 api + nginx + prometheus + grafana
 ```
+
+---
+
+## 🤖 CI
+
+Every push runs five jobs ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)):
+
+| Job | Checks |
+|-----|--------|
+| **Tests** | 32 pytest tests on Python 3.11 and 3.12 |
+| **Lint** | `ruff check` + `ruff format --check` |
+| **Against a real Redis** | fakeredis is not Redis — the Lua script runs against the real thing, including a 60-way concurrency check |
+| **Docker image** | image builds, starts, and reports `"redis":true` |
+| **Kubernetes manifests** | validated against the 1.31 schemas in strict mode |
+
+---
+
+## ⚖️ Trade-offs and limits
+
+Being honest about what this does **not** do:
+
+- 🔴 **Redis is a single point of failure.** Real HA needs Redis Sentinel or
+  Cluster. The fail-open/fail-closed policy is the mitigation, not a fix.
+- 📈 **Sliding window costs memory** — one sorted-set entry per request in the
+  window. At very high limits, a sliding-window *counter* (two buckets,
+  weighted) gets most of the accuracy for a fraction of the memory.
+- 🌍 **Single-region.** Cross-region would need either a Redis per region
+  (limits per region) or accepting replication lag.
+- 🔑 **API keys aren't authenticated.** Anyone can send any `X-API-Key`. In
+  production the key would come from your auth layer, not the raw header.
+- ⏱️ **No clock-skew handling.** Instances trust their own clocks for
+  timestamps; Redis `TIME` would remove that assumption.
+
+---
+
+## 🚀 What I'd build next
+
+1. **Token bucket** — allows controlled bursts, which most public APIs want
+2. **Per-plan limits** — `free` 10/min, `pro` 1000/min, stored in Redis
+3. **Redis Sentinel** for failover
+4. **Cost-based limits** — expensive endpoints spend more than one token
+
+---
+
+## 📚 What this project taught me
+
+- Why **atomicity** matters: check-then-act across 3 servers is a race; one
+  Lua script is not
+- Why the **fixed window bursts** at boundaries — and seeing it happen in a
+  real load test, not just in theory
+- That a **failure policy is a product decision**, not a technical one
+- That **liveness and readiness probes answer different questions**, and
+  conflating them turns a dependency outage into a restart loop
+- That a load test can **pass for the wrong reason** — my first accuracy run
+  looked fine because each k6 VU was using a different API key

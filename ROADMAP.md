@@ -1,5 +1,9 @@
 # 🚦 Distributed Rate Limiter — Step-by-Step Roadmap
 
+> ✅ **All 12 phases are built.** This file is kept as the learning path and
+> the explanation of each step; see [README.md](README.md) for how to run the
+> finished system.
+
 A beginner-friendly plan to build this project from a **brand-new laptop** to a **deployed, load-tested, monitored** system.
 
 ⏱️ Estimated time: **4–6 weeks** (1–2 hrs/day)
@@ -555,18 +559,18 @@ kubectl get hpa -w
 
 ## 🗓️ Quick Checklist
 
-- [ ] Phase 0 — tools installed
-- [ ] Phase 1 — project structure + venv
-- [ ] Phase 2 — FastAPI running
-- [ ] Phase 3 — Redis connected
-- [ ] Phase 4 — fixed window + 429 + headers
-- [ ] Phase 5 — sliding window (Lua)
-- [ ] Phase 6 — pytest passing
-- [ ] Phase 7 — Docker Compose, 3 instances + Nginx
-- [ ] Phase 8 — Redis failure handling
-- [ ] Phase 9 — k6 load tests + results
-- [ ] Phase 10 — Prometheus + Grafana dashboards
-- [ ] Phase 11 — Kubernetes + HPA
-- [ ] Phase 12 — README, CI, demo
+- [x] Phase 0 — tools installed
+- [x] Phase 1 — project structure + venv
+- [x] Phase 2 — FastAPI running
+- [x] Phase 3 — Redis connected
+- [x] Phase 4 — fixed window + 429 + headers
+- [x] Phase 5 — sliding window (Lua)
+- [x] Phase 6 — pytest passing
+- [x] Phase 7 — Docker Compose, 3 instances + Nginx
+- [x] Phase 8 — Redis failure handling
+- [x] Phase 9 — k6 load tests + results
+- [x] Phase 10 — Prometheus + Grafana dashboards
+- [x] Phase 11 — Kubernetes + HPA
+- [x] Phase 12 — README, CI, demo
 
 💡 **Commit after every phase** (`git commit -m "phase 4: fixed window limiter"`) so your GitHub history tells the story.

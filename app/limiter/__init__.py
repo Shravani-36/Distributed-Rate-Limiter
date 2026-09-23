@@ -26,8 +26,7 @@ def build_limiter(redis, algorithm: str | None = None) -> RateLimiter:
         limiter_cls = ALGORITHMS[name]
     except KeyError:
         raise ValueError(
-            f"Unknown rate limit algorithm {name!r}, expected one of "
-            f"{sorted(ALGORITHMS)}"
+            f"Unknown rate limit algorithm {name!r}, expected one of {sorted(ALGORITHMS)}"
         ) from None
 
     limiter = limiter_cls(redis, settings.rate_limit, settings.window_seconds)

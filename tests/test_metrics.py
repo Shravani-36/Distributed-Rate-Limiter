@@ -35,8 +35,12 @@ def test_metrics_endpoint_is_exposed(client):
 
 
 def test_allowed_and_blocked_are_counted_separately(client):
-    before_allowed = _sample(client.get("/metrics").text, "rl_requests_total", result="allowed")
-    before_blocked = _sample(client.get("/metrics").text, "rl_requests_total", result="blocked")
+    before_allowed = _sample(
+        client.get("/metrics").text, "rl_requests_total", result="allowed"
+    )
+    before_blocked = _sample(
+        client.get("/metrics").text, "rl_requests_total", result="blocked"
+    )
 
     for _ in range(5):  # limit is 2, so 2 allowed and 3 blocked
         client.get("/api/data", headers={"X-API-Key": "metrics-user"})

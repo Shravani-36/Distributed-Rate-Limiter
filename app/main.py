@@ -54,9 +54,7 @@ async def rate_limit_middleware(request: Request, call_next):
     ).inc()
 
     if decision.degraded:
-        DEGRADED.labels(
-            policy="fail_open" if settings.fail_open else "fail_closed"
-        ).inc()
+        DEGRADED.labels(policy="fail_open" if settings.fail_open else "fail_closed").inc()
         REDIS_ERRORS.inc()
 
     headers = {
