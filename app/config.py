@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     # "fixed" (simple, cheap) or "sliding" (accurate, no boundary burst)
     algorithm: str = "sliding"
 
+    # What to do when Redis is unreachable:
+    # True  -> serve the request anyway (availability first)
+    # False -> reject with 429 (correctness first)
+    fail_open: bool = True
+
     # Shown in responses so you can tell which instance answered.
     # Defaults to the hostname (the container or pod name).
     instance_name: str = ""

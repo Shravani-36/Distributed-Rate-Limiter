@@ -10,6 +10,10 @@ class Decision:
     remaining: int
     retry_after: int  # seconds the client should wait before retrying
 
+    # True when Redis was unreachable and the fallback policy decided this,
+    # so the answer is a guess rather than a real count.
+    degraded: bool = False
+
 
 class RateLimiter:
     """Interface shared by every algorithm."""

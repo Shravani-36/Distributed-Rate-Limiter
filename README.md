@@ -4,7 +4,7 @@ A distributed API rate limiter built with **FastAPI + Redis**. Several API
 instances share one Redis, so a client's limit is enforced **across the whole
 cluster** — not once per server.
 
-📍 **Status:** Phases 1–7 done (setup → 3 instances behind Nginx). See [ROADMAP.md](ROADMAP.md) for the full plan.
+📍 **Status:** Phases 1–8 done (setup → surviving a Redis outage). See [ROADMAP.md](ROADMAP.md) for the full plan.
 
 ---
 
@@ -66,6 +66,7 @@ Every response carries:
 | `X-RateLimit-Remaining` | how many are left |
 | `X-RateLimit-Algorithm` | `fixed` or `sliding` |
 | `X-Instance` | which API instance answered |
+| `X-RateLimit-Degraded` | `true` when Redis was down and the limit wasn't checked |
 | `Retry-After` | seconds to wait (only on `429`) |
 
 ---
@@ -90,6 +91,7 @@ Set these as environment variables:
 | `WINDOW_SECONDS` | `60` | window length |
 | `ALGORITHM` | `sliding` | `fixed` or `sliding` |
 | `INSTANCE_NAME` | hostname | name shown in `X-Instance` |
+| `FAIL_OPEN` | `true` | what to do when Redis is down (see below) |
 
 ```bash
 ALGORITHM=fixed RATE_LIMIT=5 WINDOW_SECONDS=10 uvicorn app.main:app --reload
@@ -133,13 +135,54 @@ Because the state lives in **Redis**, every API instance shares one budget 🎯
 
 ---
 
+## 🛡️ What happens when Redis dies?
+
+Redis holds the shared counters, so during an outage there is **no way to know**
+if a client is over its limit. There's no correct answer — only a trade-off you
+pick in advance with `FAIL_OPEN`:
+
+| | `FAIL_OPEN=true` (default) | `FAIL_OPEN=false` |
+|---|---|---|
+| Request | ✅ served | ❌ `429` |
+| Priority | availability | correctness |
+| Risk | an abuser is unlimited during the outage | your API is down |
+| `/health` | `200` — keep sending traffic | `503` — pull me from rotation |
+| Use for | public APIs | limits guarding payments or a paid upstream |
+
+Either way, the outage is **logged and counted** (never silently swallowed),
+and responses carry `X-RateLimit-Degraded: true` so you can see the limit
+wasn't really checked.
+
+🧪 **Try it** (kill Redis while the API runs):
+
+```bash
+docker compose stop redis     # API keeps answering 200, marked degraded
+curl -s localhost:8080/health # {"status":"degraded","redis":false,...}
+docker compose start redis    # limits come back on their own
+```
+
+Real run, limit 2:
+
+```
+Redis UP     200 remaining: 1
+             200 remaining: 0
+             429                        ⬅️ limit works
+Redis KILLED 200 remaining: -1 degraded: true   ⬅️ still serving
+             200 remaining: -1 degraded: true
+Redis BACK   200 remaining: 1
+             200 remaining: 0
+             429                        ⬅️ limit back, no restart needed
+```
+
+---
+
 ## ✅ Tests
 
 ```bash
 pytest -v
 ```
 
-18 tests, using `fakeredis` — no running Redis needed. They cover both
+27 tests, using `fakeredis` — no running Redis needed. They cover both
 algorithms, shared budgets across two limiter instances, and a
 `test_sliding_window_stops_the_boundary_burst` test that fires a burst across
 a bucket boundary: the fixed window lets **8** requests through where the
@@ -169,7 +212,8 @@ app/
 └── limiter/
     ├── base.py            # Decision + RateLimiter interface
     ├── fixed_window.py    # INCR + EXPIRE
-    └── sliding_window.py  # sorted set + Lua script
+    ├── sliding_window.py  # sorted set + Lua script
+    └── resilient.py       # fail-open / fail-closed when Redis is down
 tests/
 nginx/nginx.conf       # load balancer across the 3 instances
 Dockerfile

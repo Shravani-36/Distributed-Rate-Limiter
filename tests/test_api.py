@@ -4,13 +4,40 @@ from fastapi.testclient import TestClient
 
 from app import main
 from app.limiter.fixed_window import FixedWindowLimiter
+from app.limiter.resilient import ResilientLimiter
+from redis.exceptions import ConnectionError as RedisConnectionError
+
+
+class _BrokenLimiter:
+    """Stands in for a limiter whose Redis has gone away."""
+
+    def allow(self, client_id):
+        raise RedisConnectionError("Connection refused")
+
+
+class _BrokenRedis:
+    def ping(self):
+        raise RedisConnectionError("Connection refused")
+
+
+def _kill_redis(monkeypatch):
+    """Take Redis away from both the limiter and the health check."""
+    main.limiter.inner = _BrokenLimiter()
+    monkeypatch.setattr(main, "redis_client", _BrokenRedis())
 
 
 @pytest.fixture
 def client(monkeypatch):
-    """Swap the real Redis-backed limiter for an in-memory one."""
+    """Swap the real Redis-backed limiter for an in-memory one.
+
+    Wrapped in ResilientLimiter exactly like build_limiter does, so these
+    tests exercise the same object shape production uses.
+    """
     fake = fakeredis.FakeRedis(decode_responses=True)
-    monkeypatch.setattr(main, "limiter", FixedWindowLimiter(fake, limit=3, window=60))
+    limiter = ResilientLimiter(
+        FixedWindowLimiter(fake, limit=3, window=60), fail_open=True, limit=3
+    )
+    monkeypatch.setattr(main, "limiter", limiter)
     return TestClient(main.app)
 
 
@@ -45,3 +72,32 @@ def test_different_api_keys_get_their_own_budget(client):
 def test_health_is_never_rate_limited(client):
     for _ in range(10):
         assert client.get("/health").status_code == 200
+
+
+def test_requests_are_served_and_marked_when_redis_is_down(client, monkeypatch):
+    """Fail-open: the API keeps working, but says the limit was not checked."""
+    _kill_redis(monkeypatch)
+    res = client.get("/api/data", headers={"X-API-Key": "user1"})
+    assert res.status_code == 200
+    assert res.headers["X-RateLimit-Degraded"] == "true"
+    assert res.headers["X-RateLimit-Remaining"] == "-1"  # unknown, not zero
+
+
+def test_health_reports_degraded_but_stays_ready_when_failing_open(client, monkeypatch):
+    _kill_redis(monkeypatch)
+    res = client.get("/health")
+    assert res.status_code == 200  # still able to serve traffic
+    body = res.json()
+    assert body["redis"] is False
+    assert body["status"] == "degraded"
+    assert body["policy"] == "fail_open"
+
+
+def test_health_reports_not_ready_when_failing_closed(client, monkeypatch):
+    """Failing closed, the instance can only produce 429s, so it should be
+    pulled out of the load balancer rotation."""
+    monkeypatch.setattr(main.settings, "fail_open", False)
+    _kill_redis(monkeypatch)
+    res = client.get("/health")
+    assert res.status_code == 503
+    assert res.json()["policy"] == "fail_closed"
