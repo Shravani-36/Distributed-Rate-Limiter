@@ -4,17 +4,23 @@ A distributed API rate limiter built with **FastAPI + Redis**. Several API
 instances share one Redis, so a client's limit is enforced **across the whole
 cluster** — not once per server.
 
-📍 **Status:** Phases 1–9 done (setup → load tested with k6). See [ROADMAP.md](ROADMAP.md) for the full plan.
+📍 **Status:** Phases 1–10 done (setup → Prometheus + Grafana). See [ROADMAP.md](ROADMAP.md) for the full plan.
 
 ---
 
 ## 🐳 Run the full cluster (recommended)
 
-Three API instances + Nginx + Redis, in one command:
+Three API instances + Nginx + Redis + Prometheus + Grafana, in one command:
 
 ```bash
 docker compose up --build
 ```
+
+| What | Where |
+|------|-------|
+| 🚦 API (via Nginx) | http://localhost:8080 |
+| 📈 Grafana dashboard | http://localhost:3000 |
+| 🔍 Prometheus | http://localhost:9090 |
 
 Then hit the load balancer 👉 http://localhost:8080
 
@@ -76,6 +82,7 @@ Every response carries:
 | Method | Path | Notes |
 |--------|------|-------|
 | `GET` | `/health` | never rate limited, reports Redis status |
+| `GET` | `/metrics` | Prometheus metrics, never rate limited |
 | `GET` | `/api/data` | rate limited, returns which instance answered |
 
 ---
@@ -182,7 +189,7 @@ Redis BACK   200 remaining: 1
 pytest -v
 ```
 
-27 tests, using `fakeredis` — no running Redis needed. They cover both
+32 tests, using `fakeredis` — no running Redis needed. They cover both
 algorithms, shared budgets across two limiter instances, and a
 `test_sliding_window_stops_the_boundary_burst` test that fires a burst across
 a bucket boundary: the fixed window lets **8** requests through where the
@@ -230,6 +237,39 @@ allowed exactly 5,000 💥
 
 ---
 
+## 📈 Monitoring
+
+`docker compose up` brings up Prometheus and Grafana with the datasource and
+dashboard **already provisioned** — open http://localhost:3000 and the
+dashboard is there, nothing to click 🎉
+
+The API exposes at `/metrics`:
+
+| Metric | What it tells you |
+|--------|-------------------|
+| `rl_requests_total{result}` | allowed vs throttled traffic |
+| `rl_check_duration_seconds` | histogram of the limit check itself |
+| `rl_redis_errors_total` | Redis failures while checking a limit |
+| `rl_degraded_requests_total{policy}` | decisions made blind during an outage |
+
+The dashboard has four headline tiles (allowed, throttled, throttled share,
+p95) plus allowed-vs-throttled, per-instance traffic, latency percentiles and
+Redis health.
+
+📸 **For your README:** run `k6 run loadtest/load_test.js` with Grafana open
+and screenshot the moment `allowed` flattens at the limit while `throttled`
+climbs — that's the whole project in one picture.
+
+💡 Each API process keeps its own counters, so Prometheus scrapes all three
+instances and the queries sum across them. If you run one instance with
+`uvicorn --workers N`, each worker has a separate registry and a scrape hits
+only one of them — use one process per container instead.
+
+⏱️ Measured cost of a limit check: **0.81ms average** (20ms across 25
+requests), so metrics add no meaningful overhead.
+
+---
+
 ## 📁 Layout
 
 ```
@@ -237,14 +277,16 @@ app/
 ├── main.py            # FastAPI app + rate limit middleware
 ├── config.py          # settings from environment variables
 ├── redis_client.py    # Redis connection
+├── metrics.py         # Prometheus counters and histogram
 └── limiter/
     ├── base.py            # Decision + RateLimiter interface
     ├── fixed_window.py    # INCR + EXPIRE
     ├── sliding_window.py  # sorted set + Lua script
     └── resilient.py       # fail-open / fail-closed when Redis is down
-tests/
+tests/                 # 32 tests
 loadtest/              # k6 scripts + measured RESULTS.md
+monitoring/            # prometheus.yml + provisioned Grafana dashboard
 nginx/nginx.conf       # load balancer across the 3 instances
 Dockerfile
-docker-compose.yml     # redis + api1/api2/api3 + nginx
+docker-compose.yml     # redis + 3 api + nginx + prometheus + grafana
 ```

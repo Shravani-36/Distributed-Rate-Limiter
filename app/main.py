@@ -1,11 +1,14 @@
 import socket
+import time
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from redis.exceptions import RedisError
 
 from app.config import settings
 from app.limiter import build_limiter
+from app.metrics import CHECK_DURATION, DEGRADED, REDIS_ERRORS, REQUESTS
 from app.redis_client import redis_client
 
 app = FastAPI(title="Distributed Rate Limiter")
@@ -13,8 +16,16 @@ app = FastAPI(title="Distributed Rate Limiter")
 limiter = build_limiter(redis_client)
 INSTANCE = settings.instance_name or socket.gethostname()
 
-# Paths that must answer even when the client is being rate limited.
-EXEMPT_PATHS = {"/health", "/metrics", "/docs", "/openapi.json"}
+# Paths that must answer even when the client is being rate limited, and that
+# must not be counted as API traffic.
+EXEMPT_PATHS = {"/health", "/metrics", "/docs", "/redoc", "/openapi.json"}
+
+
+def is_exempt(path: str) -> bool:
+    # Mounting /metrics makes Starlette redirect /metrics -> /metrics/, so the
+    # exemption has to survive the trailing slash. Without this, every
+    # Prometheus scrape would spend a slot of the scraper's own rate limit.
+    return (path.rstrip("/") or "/") in EXEMPT_PATHS
 
 
 def client_id(request: Request) -> str:
@@ -28,10 +39,25 @@ def client_id(request: Request) -> str:
 
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
-    if request.url.path in EXEMPT_PATHS:
+    if is_exempt(request.url.path):
         return await call_next(request)
 
+    started = time.perf_counter()
     decision = limiter.allow(client_id(request))
+    CHECK_DURATION.labels(algorithm=settings.algorithm).observe(
+        time.perf_counter() - started
+    )
+
+    REQUESTS.labels(
+        result="allowed" if decision.allowed else "blocked",
+        algorithm=settings.algorithm,
+    ).inc()
+
+    if decision.degraded:
+        DEGRADED.labels(
+            policy="fail_open" if settings.fail_open else "fail_closed"
+        ).inc()
+        REDIS_ERRORS.inc()
 
     headers = {
         "X-RateLimit-Limit": str(decision.limit),
@@ -83,6 +109,16 @@ def health():
         },
         status_code=status_code,
     )
+
+
+@app.get("/metrics", include_in_schema=False)
+def metrics():
+    """Prometheus scrape target.
+
+    A plain route rather than app.mount(): mounting makes Starlette redirect
+    /metrics -> /metrics/, which costs every scrape an extra round trip.
+    """
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/api/data")
