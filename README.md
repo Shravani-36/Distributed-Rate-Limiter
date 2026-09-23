@@ -48,6 +48,10 @@ done
 Requests land on **different instances** (see the `X-Instance` header) and the
 limit still holds 🎯
 
+```bash
+./scripts/demo-load.sh    # drives traffic so the Grafana dashboard fills up
+```
+
 ---
 
 ## 📊 Results
@@ -117,7 +121,9 @@ eval $(minikube docker-env) && docker build -t rate-limiter:1.0 .
 kubectl apply -f k8s/
 ```
 
-3 pods + Redis + autoscaling 3 → 10 on CPU. 📄 [Runbook](k8s/README.md)
+3 pods + Redis + autoscaling 3 → 10 on CPU.
+Or run `./scripts/demo-k8s.sh` to do the whole demo and save a transcript.
+📄 [Runbook](k8s/README.md)
 
 💡 More pods raise how much traffic the API can **handle** — not anyone's
 rate limit. Capacity scales, permission doesn't.
