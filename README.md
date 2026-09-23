@@ -4,7 +4,7 @@ A distributed API rate limiter built with **FastAPI + Redis**. Several API
 instances share one Redis, so a client's limit is enforced **across the whole
 cluster** — not once per server.
 
-📍 **Status:** Phases 1–10 done (setup → Prometheus + Grafana). See [ROADMAP.md](ROADMAP.md) for the full plan.
+📍 **Status:** Phases 1–11 done (setup → Kubernetes). See [ROADMAP.md](ROADMAP.md) for the full plan.
 
 ---
 
@@ -270,6 +270,27 @@ requests), so metrics add no meaningful overhead.
 
 ---
 
+## ☸️ Kubernetes
+
+```bash
+minikube start && minikube addons enable metrics-server
+eval $(minikube docker-env) && docker build -t rate-limiter:1.0 .
+kubectl apply -f k8s/
+```
+
+3 API pods + Redis + an HPA that scales 3 → 10 on CPU. `X-Instance` shows the
+**pod name**, so you can watch requests land on different pods while the limit
+still holds 🎯
+
+💡 More pods raise how much traffic the API can **handle** — they do not raise
+anyone's rate limit. The limit lives in Redis and is shared. Capacity scales,
+permission doesn't.
+
+📄 Full runbook, probe design and the reasoning:
+**[k8s/README.md](k8s/README.md)**
+
+---
+
 ## 📁 Layout
 
 ```
@@ -286,6 +307,7 @@ app/
 tests/                 # 32 tests
 loadtest/              # k6 scripts + measured RESULTS.md
 monitoring/            # prometheus.yml + provisioned Grafana dashboard
+k8s/                   # Deployments, Services, ConfigMap, HPA
 nginx/nginx.conf       # load balancer across the 3 instances
 Dockerfile
 docker-compose.yml     # redis + 3 api + nginx + prometheus + grafana
